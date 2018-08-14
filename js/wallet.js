@@ -1007,6 +1007,64 @@ function WalletDevice() {
 
 }
 
+async function handleFirmware(files)
+{
+    var dev = new WalletDevice();
+
+    var p = await dev.is_bootloader();
+
+    document.getElementById('errors').textContent = '';
+    if (p.status != 'CTAP1_SUCCESS')
+    {
+        document.getElementById('errors').textContent = 'Make sure device is in bootloader mode.  Unplug, hold button, plug in, wait for flashing yellow light.';
+        return;
+    }
+
+    var reader = new FileReader();
+    reader.onload = async function(ev){
+        var resp = JSON.parse(ev.target.result);
+        resp.firmware = websafe2string(resp.firmware);
+
+        console.log(resp);
+        var addr = 0x4000;
+        var num_pages = 64;
+        var sig = websafe2array(resp.signature);
+        var badsig = websafe2array(resp.signature);
+        badsig[40] = badsig[40] ^ 1;
+
+        var blocks = MemoryMap.fromHex(resp.firmware);
+        var addresses = blocks.keys();
+
+        var addr = addresses.next();
+        var chunk_size = 244;
+        while(!addr.done) {
+            var data = blocks.get(addr.value);
+            var i;
+            for (i = 0; i < data.length; i += chunk_size) {
+                var chunk = data.slice(i,i+chunk_size);
+                p = await dev.bootloader_write(addr.value + i, chunk);
+                TEST(p.status == 'CTAP1_SUCCESS', 'Device wrote data');
+                var progress = (((i/data.length) * 100 * 100) | 0)/100;
+                document.getElementById('progress').textContent = ''+progress+' %';
+            }
+
+            addr = addresses.next();
+        }
+        p = await dev.bootloader_finish(sig);
+        if(p.status != 'CTAP1_SUCCESS')
+        {
+            document.getElementById('errors').textContent = 'Firmware image signature denied';
+        }
+        else
+        {
+            document.getElementById('errors').textContent = 'Update successful';
+        }
+
+    };
+
+    reader.readAsText(files[0]);
+}
+
 function TEST(bool, test){
     if (bool) {
         if (test ) console.log("PASS: " + test);
@@ -1389,5 +1447,5 @@ var test;
 
 EC = elliptic.ec
 
-run_tests()
+//run_tests()
 
