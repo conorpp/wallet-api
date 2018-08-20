@@ -236,6 +236,7 @@ var CMD = {
     reset: 0x13,
     version: 0x14,
     rng: 0x15,
+    pubkey: 0x16,
     boot_write: 0x40,
     boot_done: 0x41,
     boot_check: 0x42,
@@ -870,6 +871,24 @@ var get_rng_ = function(func){
     });
 };
 
+// Derive public key from the private key stored on device.  Returns X,Y point.  64 bytes.
+var get_pubkey_ = function(func){
+
+    var pinAuth = undefined;
+
+    if (this.pinToken) {
+        pinAuth = computePinAuth(this.pinToken, CMD.pubkey, 0, 0);
+    }
+
+    var req = formatRequest(CMD.pubkey,0,0, pinAuth);
+
+    var self = this;
+
+    send_msg(req, function(resp){
+        if (func)func(resp);
+    });
+};
+
 var is_bootloader_ = function(func){
 
     var req = formatBootRequest(CMD.boot_check);
@@ -983,6 +1002,8 @@ function WalletDevice() {
 
     this.get_rng = get_rng_;
 
+    this.get_pubkey = get_pubkey_;
+
     this.is_bootloader = is_bootloader_;
 
     this.bootloader_write = bootloader_write_;
@@ -1001,6 +1022,7 @@ function WalletDevice() {
     this.register = wrap_promise.call(this, this.register );
     this.reset = wrap_promise.call(this,this.reset );
     this.get_rng = wrap_promise.call(this,this.get_rng);
+    this.get_pubkey = wrap_promise.call(this,this.get_pubkey);
     this.is_bootloader = wrap_promise.call(this,this.is_bootloader);
     this.bootloader_write = wrap_promise.call(this,this.bootloader_write);
     this.bootloader_finish = wrap_promise.call(this,this.bootloader_finish);
@@ -1229,9 +1251,17 @@ async function run_tests() {
 
         p = await dev.sign({challenge: chal});
         TEST(p.status == 'CTAP1_SUCCESS', 'Wallet returns signature');
+        var sig = p.sig;
 
-        var ver = key.verify(chal, p.sig);
+        var ver = key.verify(chal, sig);
         TEST(ver, 'Signature is valid');
+
+        p = await dev.get_pubkey();
+        TEST(p.status == 'CTAP1_SUCCESS', 'Wallet derives public key from stored private key');
+
+        var key2 = ec.keyFromPublic('04'+array2hex(p.data), 'hex');
+        ver = key.verify(chal, sig);
+        TEST(ver, 'Signature verifies with the derived public key');
 
 
         var count = p.count;
@@ -1432,9 +1462,9 @@ async function run_tests() {
     //while(1)
     {
         await device_start_over();
-        await test_pin();
+        //await test_pin();
         await test_crypto();
-        await test_rng();
+        //await test_rng();
     }
     //await benchmark();
     //await test_persistence();
