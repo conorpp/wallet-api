@@ -1246,6 +1246,9 @@ async function run_tests() {
             TEST(p.status == "CTAP1_SUCCESS", 'Right pin works');
         }
 
+        p = await dev.get_pubkey();
+        TEST(p.status == 'CTAP1_SUCCESS', '(1) Wallet derives public key from stored private key');
+
         p = await dev.register(wif);
         TEST(p.status == 'CTAP2_ERR_KEY_STORE_FULL', 'Wallet does not accept another key');
 
@@ -1257,12 +1260,11 @@ async function run_tests() {
         TEST(ver, 'Signature is valid');
 
         p = await dev.get_pubkey();
-        TEST(p.status == 'CTAP1_SUCCESS', 'Wallet derives public key from stored private key');
+        TEST(p.status == 'CTAP1_SUCCESS', '(2) Wallet derives public key from stored private key');
 
         var key2 = ec.keyFromPublic('04'+array2hex(p.data), 'hex');
-        ver = key.verify(chal, sig);
+        ver = key2.verify(chal, sig);
         TEST(ver, 'Signature verifies with the derived public key');
-
 
         var count = p.count;
         p = await dev.sign({challenge: chal});
