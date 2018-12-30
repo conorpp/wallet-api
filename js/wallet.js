@@ -241,6 +241,7 @@ var CMD = {
     boot_done: 0x41,
     boot_check: 0x42,
     boot_erase: 0x43,
+    boot_attest: 0x60,
 };
 
 var PIN = {
@@ -408,9 +409,10 @@ function formatBootRequest(cmd, addr, data) {
     array[6] = 0x90;
     array[7] = 0xf6;
 
-    array[8] = data.length & 0xff;
+    array[8] = 0;
+    array[9] = data.length & 0xff;
 
-    var offset = 9;
+    var offset = 10;
 
     var i;
     for (i = 0; i < data.length; i++){
@@ -918,6 +920,27 @@ var bootloader_write_ = function(addr,data,func){
     });
 };
 
+var bootloader_attest_ = function(data,func){
+
+    var req = formatBootRequest(CMD.boot_attest,0 ,data);
+
+    send_msg(req, function(resp){
+        if (resp.status == 'CTAP1_SUCCESS') {
+            var r = resp.data.slice(0,32);
+            var s = resp.data.slice(32,64);
+            r = array2hex(r);
+            s = array2hex(s);
+            resp.sig = {};
+            resp.sig.r = r;
+            resp.sig.s = s;
+        }
+
+
+        if (func)func(resp);
+    });
+};
+
+
 
 function wrap_promise(func)
 {
@@ -1010,6 +1033,8 @@ function WalletDevice() {
 
     this.bootloader_finish = bootloader_finish_;
 
+    this.bootloader_attest = bootloader_attest_;
+
     this.init = wrap_promise.call(this, this.init);
     this.get_version = wrap_promise.call(this, this.get_version);
     this.get_shared_secret = wrap_promise.call(this, this.get_shared_secret );
@@ -1026,6 +1051,7 @@ function WalletDevice() {
     this.is_bootloader = wrap_promise.call(this,this.is_bootloader);
     this.bootloader_write = wrap_promise.call(this,this.bootloader_write);
     this.bootloader_finish = wrap_promise.call(this,this.bootloader_finish);
+    this.bootloader_attest = wrap_promise.call(this,this.bootloader_attest);
 
 }
 
@@ -1048,7 +1074,7 @@ async function handleFirmware(files)
         resp.firmware = websafe2string(resp.firmware);
 
         console.log(resp);
-        var addr = 0x4000;
+        var addr = 0x4800;
         var num_pages = 64;
         var sig = websafe2array(resp.signature);
         var badsig = websafe2array(resp.signature);
@@ -1263,6 +1289,7 @@ async function run_tests() {
         TEST(p.status == 'CTAP1_SUCCESS', '(2) Wallet derives public key from stored private key');
 
         var key2 = ec.keyFromPublic('04'+array2hex(p.data), 'hex');
+        print('data', p.data)
         ver = key2.verify(chal, sig);
         TEST(ver, 'Signature verifies with the derived public key');
 
@@ -1328,6 +1355,39 @@ async function run_tests() {
         TEST(tries > 2 && is_pin_set == false, 'Device is no longer locked after reset and pin and key are gone');
 
         TEST(p.count >= count, 'Counter did not reset');
+    }
+
+    async function test_attestation(){
+        var ec2 = new EC('p256');
+        var chal = string2challenge('abc');
+        // Metro wallet
+        var attestkey = '6d722c490a54add27685d6b59fa7ab5bee31592b2bb784522dd842745df9164c0c4c043dba5199a83b1e3fdddd14d3dee9d78787faf861db7fccd108499e24b1';
+        var attest = ec2.keyFromPublic('04'+attestkey, 'hex');
+
+        var p = await dev.is_bootloader();
+
+
+        if (p.status == 'CTAP1_SUCCESS')
+        {
+            p = await dev.bootloader_attest(chal);
+            console.log(p);
+            TEST(p.status == "CTAP1_SUCCESS");
+
+            ver = attest.verify(chal, p.sig);
+            TEST(ver, 'Test attestation passes');
+
+        }
+        else
+        {
+            p = await dev.reset();
+            TEST(p.status == "CTAP1_SUCCESS");
+
+            p = await dev.sign({challenge: chal, keyid: new Uint8Array([0xaa])});
+            TEST(p.status == "CTAP1_SUCCESS");
+
+            ver = attest.verify(chal, p.sig);
+            TEST(ver, 'Test attestation passes');
+        }
     }
 
     async function test_rng(){
@@ -1404,7 +1464,7 @@ async function run_tests() {
 
     async function test_bootloader()
     {
-        var addr = 0x4000;
+        var addr = 0x4800;
         var num_pages = 64;
 
         var p = await dev.is_bootloader();
@@ -1464,9 +1524,10 @@ async function run_tests() {
     //while(1)
     {
         await device_start_over();
-        //await test_pin();
+        await test_pin();
         await test_crypto();
-        //await test_rng();
+        await test_rng();
+        await test_attestation();
     }
     //await benchmark();
     //await test_persistence();
